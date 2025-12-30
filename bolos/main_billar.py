@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from hand_tracking import HandTracker
 from billiard_game import BilliardGame
+from pymunk_config import SIMULATION_DT
 
 def main():
     # Inicializar componentes
@@ -134,6 +135,9 @@ def main():
                 game.shoot()
                 prev_right_pos = None
 
+        # PYMUNK: Avanzar simulación de física
+        game.space.step(SIMULATION_DT)
+        
         # Actualizar física del juego
         game.update()
         
