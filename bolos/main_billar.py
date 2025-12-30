@@ -137,6 +137,7 @@ def main():
 
         # PYMUNK: Avanzar simulación de física
         game.space.step(SIMULATION_DT)
+        game.update_physics()  # Detener bolas lentas
         
         # Actualizar física del juego
         game.update()

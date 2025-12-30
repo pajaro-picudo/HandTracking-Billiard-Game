@@ -224,9 +224,21 @@ class BilliardGame:
         """Verifica si alguna bola está en movimiento"""
         for body in self.ball_bodies.values():
             velocity = body.velocity
-            if velocity.length > 0.5:  # Umbral de velocidad
+            if velocity.length > 20.0:  # Umbral de velocidad
                 return True
         return False
+    
+    def update_physics(self):
+        """Detener bolas muy lentas (como billar real)"""
+        MIN_VELOCITY = 20.0  # Umbral para detener
+        
+        for body in self.ball_bodies.values():
+            speed = body.velocity.length
+            
+            # Si la bola está muy lenta, detenerla completamente
+            if speed < MIN_VELOCITY:
+                body.velocity = (0, 0)
+                body.angular_velocity = 0
     
     def update(self):
         """Actualiza el estado del juego - PyMunk maneja física automáticamente"""
