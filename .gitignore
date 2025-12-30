@@ -1,0 +1,39 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln.docstates
+bin/
+obj/
+
+# Python virtual environments
+.venv*/
+venv*/
+env*/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Dependencies
+PyMunk/.venv*/
+bolos/.venv*/
+**/site-packages/
+**/Lib/site-packages/
+**/Scripts/
+
+# Large libraries (específicos del error)
+**/cv2.pyd
+**/cv2.pyd
+**/opencv_world*.dll
+**/jaxlib/
+**/jax_common.dll
+
+# Logs y temporales
+*.log
+.DS_Store
+Thumbs.db
