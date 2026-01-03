@@ -57,10 +57,10 @@ class BilliardGame:
     def init_pockets(self):
         """Inicializa las troneras en las esquinas y centros"""
         self.pockets = [
-            {'pos': self.table_3d['near_left'], 'radius': 32},   # ANTES 25 → 32
-            {'pos': self.table_3d['near_right'], 'radius': 32},  # ANTES 25 → 32
-            {'pos': self.table_3d['far_left'], 'radius': 28},    # ANTES 20 → 28
-            {'pos': self.table_3d['far_right'], 'radius': 28},   # ANTES 20 → 28
+            {'pos': self.table_3d['near_left'], 'radius': 40},   # ANTES 35 → 40
+            {'pos': self.table_3d['near_right'], 'radius': 40},  # ANTES 35 → 40
+            {'pos': self.table_3d['far_left'], 'radius': 35},    # ANTES 30 → 35
+            {'pos': self.table_3d['far_right'], 'radius': 35},   # ANTES 30 → 35
         ]
         
         near_center = (
@@ -72,9 +72,10 @@ class BilliardGame:
             (self.table_3d['far_left'][1] + self.table_3d['far_right'][1]) // 2
         )
         
-        self.pockets.append({'pos': near_center, 'radius': 30})  # ANTES 22 → 30
-        self.pockets.append({'pos': far_center, 'radius': 26})   # ANTES 18 → 26
+        self.pockets.append({'pos': near_center, 'radius': 38})  # ANTES 32 → 38
+        self.pockets.append({'pos': far_center, 'radius': 33})   # ANTES 28 → 33
     
+
     def create_walls(self):
         """Crea las paredes de la mesa con PyMunk"""
         wall_thickness = 10
@@ -336,50 +337,69 @@ class BilliardGame:
                 body.angular_velocity = 0
     
     def update(self):
-        """Actualiza el estado del juego - PyMunk maneja física automáticamente"""
-        # Verificar bolas que caen en troneras
-        self.check_pockets()
+        """Actualiza el estado del juego"""
+        # Avanzar simulación física
+        self.space.step(1/120.0)      # 120 Hz de física
+        self.update_physics()         # Frenado personalizado
+        self.check_pockets()          # Detección de troneras
     
     def check_pockets(self):
-        """Detección troneras: bola entra si está CERCA del borde"""
+        """Verifica si las bolas caen en las troneras (múltiples por frame, depurable)"""
         balls_to_remove = []
-        
-        for number, body in list(self.ball_bodies.items()):  # ✅ list() para iteración segura
-            bx, by = body.position
-            
+
+        # 1) Copia de claves para no tocar el diccionario mientras iteramos
+        active_numbers = list(self.ball_bodies.keys())
+        # DEBUG:
+        # print(f"[DEBUG] check_pockets: bolas activas = {active_numbers}")
+
+        for number in active_numbers:
+            # Puede haberse eliminado en este mismo frame
+            if number not in self.ball_bodies:
+                continue
+
+            body = self.ball_bodies[number]
+            bx, by = float(body.position.x), float(body.position.y)
+
             for pocket in self.pockets:
                 px, py = pocket['pos']
-                dx = bx - px
-                dy = by - py
-                distance = math.hypot(dx, dy)
-                
-                # ✅ DETECCIÓN CORREGIDA:
-                # Tronera absorbe si centro_bola está a distancia <= radio_tronera - radio_bola
-                pocket_effective_radius = pocket['radius'] - BALL_RADIUS + 8  # +8 margen
-                
-                if distance < pocket_effective_radius:
-                    print(f"🎱 BOLA {number} CAE! dist={distance:.1f}")
-                    
-                    if number == 0:  # Bola blanca
+                distance = math.hypot(bx - px, by - py)
+
+                # Radios efectivos generosos (ajusta si hace falta)
+                if number == 0:
+                    effective_radius = pocket['radius']  # Blanca
+                else:
+                    effective_radius = pocket['radius']  # Colores igual de fácil
+
+                # DEBUG:
+                # print(f"[DEBUG] bola {number}: dist={distance:.1f}, eff={effective_radius:.1f}")
+
+                if distance < effective_radius:
+                    print(f"🎱 BOLA {number} CAE EN TRONERA (dist={distance:.1f} < {effective_radius:.1f})")
+
+                    if number == 0:
+                        # Bola blanca: reponer sin eliminar
                         self.score = max(0, self.score - 50)
-                        # Reposicionar bola blanca
                         cue_x, cue_y = self.convert_3d_to_2d(0.3, 0.5)
-                        body.position = cue_x, cue_y
+                        body.position = (cue_x, cue_y)
                         body.velocity = (0, 0)
                         body.angular_velocity = 0
-                    else:  # ✅ OTRAS BOLAS - REMOVER COMPLETO
-                        self.score += 50
+                    else:
+                        # Marcar bola de color para eliminar
                         balls_to_remove.append(number)
-                        break  # Solo una tronera por bola
-                    break
-        
-        # ✅ REMOVER FUERA DEL LOOP (iteración segura)
+                    break  # Salir del bucle de pockets para esta bola
+
+        # 2) Eliminar bolas marcadas FUERA del bucle principal
+        if balls_to_remove:
+            print(f"[DEBUG] Eliminando bolas: {balls_to_remove}")
+
         for number in balls_to_remove:
-            if number in self.ball_bodies:
-                body = self.ball_bodies.pop(number)      # ✅ pop() seguro
-                shape = self.ball_shapes.pop(number)
+            body = self.ball_bodies.pop(number, None)
+            shape = self.ball_shapes.pop(number, None)
+            if body is not None and shape is not None:
                 self.space.remove(body, shape)
-                self.ball_colors.pop(number)
+            self.ball_colors.pop(number, None)
+            self.score += 50
+            print(f"[DEBUG] Bola {number} eliminada. Score = {self.score}")
     
     def draw(self, frame):
         """Dibuja el juego en el frame"""
@@ -400,8 +420,8 @@ class BilliardGame:
         for pocket in self.pockets:
             # Tronera negra
             cv2.circle(frame, pocket['pos'], pocket['radius'], (0, 0, 0), -1)
-            # Borde blanco (más grueso)
-            cv2.circle(frame, pocket['pos'], pocket['radius'], (255, 255, 255), 3)
+            # Borde grueso naranja/café
+            cv2.circle(frame, pocket['pos'], pocket['radius'] + 3, (100, 50, 0), 4)
         
         # VECTOR PREVIEW (mano izq abierta) - NO TOCAR
         if self.show_aim_vector and self.aim_vector_start and self.aim_vector_end:
