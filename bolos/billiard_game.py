@@ -44,6 +44,12 @@ class BilliardGame:
         self.aim_vector_start = None
         self.aim_vector_end = None
         
+        # SISTEMA DE DOS FASES
+        self.game_phase = 'idle'          # 'idle', 'aiming_direction', 'aiming_power'
+        self.frozen_direction = None      # (dx, dy) unitario
+        self.current_power = 0.0          # potencia en fase 2
+        self.power_origin = None          # (x, y) en pantalla, SIEMPRE centro de la bola blanca
+        
         # Crear paredes y bolas con PyMunk
         self.create_walls()
         self.initialize_balls()
@@ -171,54 +177,105 @@ class BilliardGame:
     
     def start_aiming(self, x, y):
         """Inicia el proceso de apuntar (NO TOCAR - usado por gestos)"""
-        if not self.any_ball_moving():
+        if not self.any_ball_moving() and self.cue_ball_body:
             self.aiming = True
-            self.aim_start = (x, y)
-            self.aim_end = (x, y)
+            self.game_phase = 'aiming_direction'
+            cue_x, cue_y = self.cue_ball_body.position
+            # origen visual y geométrico = centro bola blanca
+            self.aim_start = (int(cue_x), int(cue_y))
+            self.aim_end = (int(x), int(y))
     
     def update_aim(self, x, y):
         """Actualiza la dirección de apunte (NO TOCAR - usado por gestos)"""
-        if self.aiming:
+        if not self.aiming:
+            return
+
+        if self.game_phase == 'aiming_direction':
+            # FASE 1: solo dirección, origen = bola blanca
             self.aim_end = (x, y)
+
+        elif self.game_phase == 'aiming_power':
+            # FASE 2: dirección FIJA (frozen_direction), solo cambia potencia
+            if self.power_origin and self.frozen_direction:
+                dx = x - self.power_origin[0]
+                dy = y - self.power_origin[1]
+                # proyectar movimiento sobre la dirección congelada
+                projected = dx * self.frozen_direction[0] + dy * self.frozen_direction[1]
+                self.current_power = max(0.0, min(projected / 12.0, 20.0))
+            # aim_end NO cambia en fase 2 (la dirección está congelada)
+    
+    def freeze_direction(self):
+        """Congela la dirección y pasa a la fase de ajuste de potencia"""
+        if not (self.aiming and self.game_phase == 'aiming_direction' and self.cue_ball_body and self.aim_end):
+            return
+
+        cue_x, cue_y = self.cue_ball_body.position
+        origin = (float(cue_x), float(cue_y))
+        dx = self.aim_end[0] - origin[0]
+        dy = self.aim_end[1] - origin[1]
+        distance = math.hypot(dx, dy)
+        if distance < 10:
+            return
+
+        # vector unitario desde la bola blanca hacia aim_end
+        self.frozen_direction = (dx / distance, dy / distance)
+        self.power_origin = (int(origin[0]), int(origin[1]))
+        self.current_power = 0.0
+
+        # fijar aim_start / aim_end para que la línea se vea en la dirección congelada
+        reference_dist = 250
+        self.aim_start = (int(origin[0]), int(origin[1]))
+        self.aim_end = (
+            int(origin[0] + self.frozen_direction[0] * reference_dist),
+            int(origin[1] + self.frozen_direction[1] * reference_dist)
+        )
+
+        self.game_phase = 'aiming_power'
     
     def shoot(self):
         """Ejecuta el tiro con PyMunk"""
-        if self.aiming and self.aim_start and self.aim_end and self.cue_ball_body:
+        if not self.aiming or not self.cue_ball_body:
+            return
+
+        # MODO FASE 2 (preferente)
+        if self.game_phase == 'aiming_power' and self.frozen_direction is not None:
+            direction_x, direction_y = self.frozen_direction
+            power = self.current_power
+        # MODO FASE 1 (por compatibilidad)
+        elif self.aim_start and self.aim_end:
             dx = self.aim_end[0] - self.aim_start[0]
             dy = self.aim_end[1] - self.aim_start[1]
-            
-            # Validar dirección
-            if dx <= 0:
-                print(f"[DISPARO DESCARTADO] Movimiento hacia la izquierda (dx={dx:.1f}).")
-                self.aiming = False
-                self.aim_start = None
-                self.aim_end = None
+            distance = math.hypot(dx, dy)
+            if distance < 10:
+                self.reset_aim()
                 return
-            
-            distance = math.sqrt(dx**2 + dy**2)
-            
-            if distance > 10:
-                direction_x = dx / distance
-                direction_y = dy / distance
-                
-                # Calcular potencia (máximo 20)
-                power = min(distance / 12, 20)
-                
-                # PYMUNK: Aplicar velocidad con multiplicador de escala x30
-                velocity_scale = 30
-                self.cue_ball_body.velocity = (
-                    direction_x * power * velocity_scale,
-                    direction_y * power * velocity_scale
-                )
-                
-                # Añadir spin/rotación proporcional al impacto
-                self.cue_ball_body.angular_velocity = (power * velocity_scale) / BALL_RADIUS
-                
-                print(f"[DISPARO EXITOSO] dx={dx:.1f}, dy={dy:.1f}, potencia={power:.1f}")
-            
-            self.aiming = False
-            self.aim_start = None
-            self.aim_end = None
+            direction_x = dx / distance
+            direction_y = dy / distance
+            power = min(distance / 12.0, 20.0)
+        else:
+            self.reset_aim()
+            return
+
+        if power > 1.0:
+            velocity_scale = 30
+            self.cue_ball_body.velocity = (
+                direction_x * power * velocity_scale,
+                direction_y * power * velocity_scale
+            )
+            self.cue_ball_body.angular_velocity = (power * velocity_scale) / BALL_RADIUS
+            print(f"[DISPARO EXITOSO] dirección=({direction_x:.2f}, {direction_y:.2f}), potencia={power:.1f}")
+
+        self.reset_aim()
+    
+    def reset_aim(self):
+        """Resetea todas las variables de apuntado"""
+        self.aiming = False
+        self.game_phase = 'idle'
+        self.aim_start = None
+        self.aim_end = None
+        self.frozen_direction = None
+        self.power_origin = None
+        self.current_power = 0.0
     
     def any_ball_moving(self):
         """Verifica si alguna bola está en movimiento"""
@@ -309,57 +366,67 @@ class BilliardGame:
             cv2.circle(frame, self.aim_vector_start, 10, (255, 255, 255), 2)
             self.draw_arrow(frame, self.aim_vector_start, self.aim_vector_end, azul_claro, 4)
         
-        # LÍNEA DE APUNTE (mano izq cerrada) - NO TOCAR
+        # SISTEMA DE DOS FASES
         if self.aiming and self.aim_start and self.aim_end:
-            rojo = (0, 0, 255)
-            cv2.line(frame, self.aim_start, self.aim_end, rojo, 5)
-            cv2.circle(frame, self.aim_start, 10, rojo, -1)
-            cv2.circle(frame, self.aim_start, 10, (255, 255, 255), 2)
-            cv2.circle(frame, self.aim_end, 10, (255, 150, 0), -1)
-            cv2.circle(frame, self.aim_end, 10, (255, 255, 255), 2)
-            
-            # BARRA DE POTENCIA - NO TOCAR
-            dx = self.aim_end[0] - self.aim_start[0]
-            dy = self.aim_end[1] - self.aim_start[1]
-            distance = math.sqrt(dx**2 + dy**2)
-            power = min(int(distance / 12), 20)
-            
-            bar_width = 400
-            bar_height = 40
-            bar_x = (self.width - bar_width) // 2
-            bar_y = 30
-            
-            cv2.rectangle(frame, (bar_x - 5, bar_y - 5), 
-                         (bar_x + bar_width + 5, bar_y + bar_height + 5), 
-                         (0, 0, 0), -1)
-            cv2.rectangle(frame, (bar_x - 5, bar_y - 5), 
-                         (bar_x + bar_width + 5, bar_y + bar_height + 5), 
-                         (255, 255, 255), 3)
-            
-            if power <= 10:
-                bar_color = (0, 255, 0)
-                status = "BAJA"
-            elif power <= 20:
-                bar_color = (0, 165, 255)
-                status = "MEDIA"
-            else:
-                bar_color = (0, 0, 255)
-                status = "ALTA"
-            
-            fill_width = int((power / 20) * bar_width)
-            cv2.rectangle(frame, (bar_x, bar_y), 
-                         (bar_x + fill_width, bar_y + bar_height), 
-                         bar_color, -1)
-            
-            text = f"POWER: {power}/20 [{status}]"
-            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
-            text_x = (self.width - text_size[0]) // 2
-            text_y = bar_y + bar_height + 35
-            
-            cv2.putText(frame, text, (text_x + 2, text_y + 2), 
-                       cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 0, 0), 3)
-            cv2.putText(frame, text, (text_x, text_y), 
-                       cv2.FONT_HERSHEY_DUPLEX, 1.2, bar_color, 3)
+            if self.game_phase == 'aiming_direction':
+                # FASE 1: Línea AZUL punteada desde bola blanca
+                azul = (255, 150, 0)
+                self.draw_dashed_line(frame, self.aim_start, self.aim_end, azul, 4, 15)
+                cv2.circle(frame, self.aim_start, 10, azul, -1)
+                cv2.circle(frame, self.aim_start, 10, (255, 255, 255), 2)
+                cv2.circle(frame, self.aim_end, 8, (255, 200, 100), -1)
+                self.draw_arrow(frame, self.aim_start, self.aim_end, azul, 4)
+                
+            elif self.game_phase == 'aiming_power':
+                # FASE 2: Línea ROJA sólida desde power_origin (bola blanca)
+                rojo = (0, 0, 255)
+                if self.power_origin:
+                    cv2.line(frame, self.power_origin, self.aim_end, rojo, 5)
+                    cv2.circle(frame, self.power_origin, 10, rojo, -1)
+                    cv2.circle(frame, self.power_origin, 10, (255, 255, 255), 2)
+                    cv2.circle(frame, self.aim_end, 10, (255, 150, 0), -1)
+                    cv2.circle(frame, self.aim_end, 10, (255, 255, 255), 2)
+                    self.draw_arrow(frame, self.power_origin, self.aim_end, rojo, 5)
+                
+                # BARRA DE POTENCIA - Solo en FASE 2
+                power = int(self.current_power)
+                
+                bar_width = 400
+                bar_height = 40
+                bar_x = (self.width - bar_width) // 2
+                bar_y = 30
+                
+                cv2.rectangle(frame, (bar_x - 5, bar_y - 5), 
+                             (bar_x + bar_width + 5, bar_y + bar_height + 5), 
+                             (0, 0, 0), -1)
+                cv2.rectangle(frame, (bar_x - 5, bar_y - 5), 
+                             (bar_x + bar_width + 5, bar_y + bar_height + 5), 
+                             (255, 255, 255), 3)
+                
+                if power <= 10:
+                    bar_color = (0, 255, 0)
+                    status = "BAJA"
+                elif power <= 15:
+                    bar_color = (0, 165, 255)
+                    status = "MEDIA"
+                else:
+                    bar_color = (0, 0, 255)
+                    status = "ALTA"
+                
+                fill_width = int((power / 20) * bar_width)
+                cv2.rectangle(frame, (bar_x, bar_y), 
+                             (bar_x + fill_width, bar_y + bar_height), 
+                             bar_color, -1)
+                
+                text = f"POWER: {power}/20 [{status}]"
+                text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+                text_x = (self.width - text_size[0]) // 2
+                text_y = bar_y + bar_height + 35
+                
+                cv2.putText(frame, text, (text_x + 2, text_y + 2), 
+                           cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 0, 0), 3)
+                cv2.putText(frame, text, (text_x, text_y), 
+                           cv2.FONT_HERSHEY_DUPLEX, 1.2, bar_color, 3)
         
         # PYMUNK: Dibujar bolas desde bodies
         for number, body in self.ball_bodies.items():
@@ -482,6 +549,12 @@ class BilliardGame:
         self.show_aim_vector = False
         self.aim_vector_start = None
         self.aim_vector_end = None
+        
+        # Resetear variables del sistema de dos fases
+        self.game_phase = 'idle'
+        self.frozen_direction = None
+        self.current_power = 0.0
+        self.power_origin = None
         
         # PYMUNK: Limpiar espacio y recrear
         for number, body in list(self.ball_bodies.items()):
