@@ -89,6 +89,9 @@ def main():
                         # Iniciar FASE 1 (selección de dirección)
                         game.start_aiming(game_x, game_y)
                         prev_right_pos = None
+                    elif game.game_phase == 'aiming_power':
+                        # VOLVER a FASE 1 (cancelar potencia)
+                        game.cancel_power_phase()
                     
                     left_was_closed = True
                 

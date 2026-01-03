@@ -20,8 +20,8 @@ class BilliardGame:
         # PYMUNK: Crear espacio de física
         self.space = pymunk.Space()
         self.space.gravity = GRAVITY
-        self.space.damping = DAMPING
-        self.space.iterations = SIMULATION_ITERATIONS
+        self.space.damping = 0.90  # ANTES 0.88 → AHORA 0.90 (equilibrio velocidad/fricción)
+        self.space.iterations = 20  # ANTES SIMULATION_ITERATIONS → AHORA 20 (precisión física)
         
         # Diccionarios para bolas PyMunk
         self.ball_bodies = {}  # {number: body}
@@ -92,8 +92,8 @@ class BilliardGame:
         for start, end in walls:
             wall_body = pymunk.Body(body_type=pymunk.Body.STATIC)
             wall_shape = pymunk.Segment(wall_body, start, end, wall_thickness)
-            wall_shape.elasticity = WALL_ELASTICITY
-            wall_shape.friction = WALL_FRICTION
+            wall_shape.elasticity = 0.75  # ANTES WALL_ELASTICITY → Menos rebote
+            wall_shape.friction = 1.2  # ANTES WALL_FRICTION → Más agarre en paredes
             self.space.add(wall_body, wall_shape)
     
     def create_ball(self, x, y, number, color, is_cue=False):
@@ -105,8 +105,8 @@ class BilliardGame:
         
         # Crear forma de colisión
         shape = pymunk.Circle(body, BALL_RADIUS)
-        shape.elasticity = BALL_ELASTICITY
-        shape.friction = BALL_FRICTION
+        shape.elasticity = 0.75  # ANTES 0.85 → Rebote mínimo
+        shape.friction = 1.1  # ANTES 0.9 → Máximo agarre entre bolas
         
         # Añadir al espacio
         self.space.add(body, shape)
@@ -180,6 +180,12 @@ class BilliardGame:
         if not self.any_ball_moving() and self.cue_ball_body:
             self.aiming = True
             self.game_phase = 'aiming_direction'
+            
+            # ✅ FRENO EMERGENCIA al iniciar apuntado
+            for body in self.ball_bodies.values():
+                body.velocity *= 0.1   # Reducir 90% velocidad instantáneo
+                body.angular_velocity *= 0.1
+            
             cue_x, cue_y = self.cue_ball_body.position
             # origen visual y geométrico = centro bola blanca
             self.aim_start = (int(cue_x), int(cue_y))
@@ -221,6 +227,10 @@ class BilliardGame:
         self.frozen_direction = (dx / distance, dy / distance)
         self.power_origin = (int(origin[0]), int(origin[1]))
         self.current_power = 0.0
+        
+        # ✅ FRENO al congelar dirección
+        for body in self.ball_bodies.values():
+            body.velocity *= 0.05  # Casi parar todo
 
         # fijar aim_start / aim_end para que la línea se vea en la dirección congelada
         reference_dist = 250
@@ -231,6 +241,16 @@ class BilliardGame:
         )
 
         self.game_phase = 'aiming_power'
+    
+    def cancel_power_phase(self):
+        """Volver de FASE 2 → FASE 1 (desactivar potencia, volver a dirección)"""
+        if self.game_phase == 'aiming_power':
+            print("🔄 Cancelando potencia → Volviendo a dirección")
+            self.game_phase = 'aiming_direction'
+            self.frozen_direction = None
+            self.current_power = 0.0
+            self.power_origin = None
+            # Mantener aim_start y aim_end para que el usuario vea dónde estaba
     
     def shoot(self):
         """Ejecuta el tiro con PyMunk"""
@@ -257,12 +277,15 @@ class BilliardGame:
             return
 
         if power > 1.0:
-            velocity_scale = 30
+            velocity_scale = 75  # ANTES 90 → 75 (blanca más controlada)
+            
+            # ✅ BOLA BLANCA más suave
             self.cue_ball_body.velocity = (
-                direction_x * power * velocity_scale,
-                direction_y * power * velocity_scale
+                direction_x * power * velocity_scale * 0.85,  # 15% menos para blanca
+                direction_y * power * velocity_scale * 0.85
             )
-            self.cue_ball_body.angular_velocity = (power * velocity_scale) / BALL_RADIUS
+            self.cue_ball_body.angular_velocity = (power * velocity_scale * 0.6) / BALL_RADIUS
+            
             print(f"[DISPARO EXITOSO] dirección=({direction_x:.2f}, {direction_y:.2f}), potencia={power:.1f}")
 
         self.reset_aim()
@@ -278,20 +301,29 @@ class BilliardGame:
         self.current_power = 0.0
     
     def any_ball_moving(self):
-        """Verifica si alguna bola está en movimiento"""
+        """Bloquea apuntado si CUALQUIER bola tiene velocidad > 5"""
         for body in self.ball_bodies.values():
             velocity = body.velocity
-            if velocity.length > 20.0:  # Umbral de velocidad
+            if velocity.length > 5.0:  # ANTES 20.0 → 5.0 (ultra estricta)
                 return True
         return False
     
     def update_physics(self):
-        """Detener bolas muy lentas (como billar real)"""
-        MIN_VELOCITY = 20.0  # Umbral para detener
+        """Detener bolas con freno progresivo equilibrado"""
+        MIN_VELOCITY = 3.0  # ANTES 5.0 → AHORA 3.0
         
         for body in self.ball_bodies.values():
             speed = body.velocity.length
             
+            # ✅ DURANTE AIMING: PARAR TODO INMEDIATAMENTE
+            if self.aiming and speed > 0:
+                body.velocity *= 0.8    # Frenar fuerte
+                body.angular_velocity *= 0.8
+                
+            # FRENO PROGRESIVO: solo si va muy rápido
+            elif speed > MIN_VELOCITY * 2:  # Solo frenar si va muy rápido
+                body.velocity *= 0.97     # ANTES 0.95 → 0.97 (freno suave)
+                
             # Si la bola está muy lenta, detenerla completamente
             if speed < MIN_VELOCITY:
                 body.velocity = (0, 0)
