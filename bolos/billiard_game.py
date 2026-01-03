@@ -57,10 +57,10 @@ class BilliardGame:
     def init_pockets(self):
         """Inicializa las troneras en las esquinas y centros"""
         self.pockets = [
-            {'pos': self.table_3d['near_left'], 'radius': 25},
-            {'pos': self.table_3d['near_right'], 'radius': 25},
-            {'pos': self.table_3d['far_left'], 'radius': 20},
-            {'pos': self.table_3d['far_right'], 'radius': 20},
+            {'pos': self.table_3d['near_left'], 'radius': 32},   # ANTES 25 → 32
+            {'pos': self.table_3d['near_right'], 'radius': 32},  # ANTES 25 → 32
+            {'pos': self.table_3d['far_left'], 'radius': 28},    # ANTES 20 → 28
+            {'pos': self.table_3d['far_right'], 'radius': 28},   # ANTES 20 → 28
         ]
         
         near_center = (
@@ -72,8 +72,8 @@ class BilliardGame:
             (self.table_3d['far_left'][1] + self.table_3d['far_right'][1]) // 2
         )
         
-        self.pockets.append({'pos': near_center, 'radius': 22})
-        self.pockets.append({'pos': far_center, 'radius': 18})
+        self.pockets.append({'pos': near_center, 'radius': 30})  # ANTES 22 → 30
+        self.pockets.append({'pos': far_center, 'radius': 26})   # ANTES 18 → 26
     
     def create_walls(self):
         """Crea las paredes de la mesa con PyMunk"""
@@ -310,7 +310,8 @@ class BilliardGame:
     
     def update_physics(self):
         """Detener bolas con freno progresivo equilibrado"""
-        MIN_VELOCITY = 3.0  # ANTES 5.0 → AHORA 3.0
+        MIN_VELOCITY_SLOW = 6.0  # Nueva: umbral lento
+        MIN_VELOCITY_STOP = 3.0  # Umbral parada
         
         for body in self.ball_bodies.values():
             speed = body.velocity.length
@@ -321,11 +322,16 @@ class BilliardGame:
                 body.angular_velocity *= 0.8
                 
             # FRENO PROGRESIVO: solo si va muy rápido
-            elif speed > MIN_VELOCITY * 2:  # Solo frenar si va muy rápido
-                body.velocity *= 0.97     # ANTES 0.95 → 0.97 (freno suave)
+            elif speed > MIN_VELOCITY_SLOW * 2:  # Solo frenar si va muy rápido
+                body.velocity *= 0.97     # Freno suave
+                
+            # ✅ NUEVO: Cuando LENTA → PARADA INMEDIATA
+            elif speed > MIN_VELOCITY_STOP:
+                body.velocity *= 0.3    # Reducir 70% cada frame
+                body.angular_velocity *= 0.3
                 
             # Si la bola está muy lenta, detenerla completamente
-            if speed < MIN_VELOCITY:
+            else:
                 body.velocity = (0, 0)
                 body.angular_velocity = 0
     
@@ -335,18 +341,25 @@ class BilliardGame:
         self.check_pockets()
     
     def check_pockets(self):
-        """Verifica si las bolas caen en las troneras"""
+        """Detección troneras: bola entra si está CERCA del borde"""
         balls_to_remove = []
         
-        for number, body in self.ball_bodies.items():
-            x, y = body.position
+        for number, body in list(self.ball_bodies.items()):  # ✅ list() para iteración segura
+            bx, by = body.position
             
             for pocket in self.pockets:
-                dx = x - pocket['pos'][0]
-                dy = y - pocket['pos'][1]
-                distance = math.sqrt(dx**2 + dy**2)
+                px, py = pocket['pos']
+                dx = bx - px
+                dy = by - py
+                distance = math.hypot(dx, dy)
                 
-                if distance < pocket['radius']:
+                # ✅ DETECCIÓN CORREGIDA:
+                # Tronera absorbe si centro_bola está a distancia <= radio_tronera - radio_bola
+                pocket_effective_radius = pocket['radius'] - BALL_RADIUS + 8  # +8 margen
+                
+                if distance < pocket_effective_radius:
+                    print(f"🎱 BOLA {number} CAE! dist={distance:.1f}")
+                    
                     if number == 0:  # Bola blanca
                         self.score = max(0, self.score - 50)
                         # Reposicionar bola blanca
@@ -354,20 +367,19 @@ class BilliardGame:
                         body.position = cue_x, cue_y
                         body.velocity = (0, 0)
                         body.angular_velocity = 0
-                    else:  # Bola de color
+                    else:  # ✅ OTRAS BOLAS - REMOVER COMPLETO
                         self.score += 50
                         balls_to_remove.append(number)
+                        break  # Solo una tronera por bola
                     break
         
-        # Remover bolas que cayeron
+        # ✅ REMOVER FUERA DEL LOOP (iteración segura)
         for number in balls_to_remove:
             if number in self.ball_bodies:
-                body = self.ball_bodies[number]
-                shape = self.ball_shapes[number]
+                body = self.ball_bodies.pop(number)      # ✅ pop() seguro
+                shape = self.ball_shapes.pop(number)
                 self.space.remove(body, shape)
-                del self.ball_bodies[number]
-                del self.ball_shapes[number]
-                del self.ball_colors[number]
+                self.ball_colors.pop(number)
     
     def draw(self, frame):
         """Dibuja el juego en el frame"""
@@ -386,8 +398,10 @@ class BilliardGame:
         
         # Dibujar troneras
         for pocket in self.pockets:
+            # Tronera negra
             cv2.circle(frame, pocket['pos'], pocket['radius'], (0, 0, 0), -1)
-            cv2.circle(frame, pocket['pos'], pocket['radius'], (100, 50, 0), 2)
+            # Borde blanco (más grueso)
+            cv2.circle(frame, pocket['pos'], pocket['radius'], (255, 255, 255), 3)
         
         # VECTOR PREVIEW (mano izq abierta) - NO TOCAR
         if self.show_aim_vector and self.aim_vector_start and self.aim_vector_end:
