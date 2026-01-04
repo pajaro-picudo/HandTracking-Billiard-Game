@@ -106,8 +106,8 @@ class BilliardGame:
         
         # Crear forma de colisión
         shape = pymunk.Circle(body, BALL_RADIUS)
-        shape.elasticity = 0.75  # ANTES 0.85 → Rebote mínimo
-        shape.friction = 1.1  # ANTES 0.9 → Máximo agarre entre bolas
+        shape.elasticity = 1  # ANTES 0.75 → Mayor rebote/transferencia de energía
+        shape.friction = 0.9  # ANTES 1.1 → Menos agarre = más velocidad
         
         # Añadir al espacio
         self.space.add(body, shape)
@@ -278,12 +278,12 @@ class BilliardGame:
             return
 
         if power > 1.0:
-            velocity_scale = 75  # ANTES 90 → 75 (blanca más controlada)
+            velocity_scale = 85  # ANTES 75 → 85 (más potencia)
             
-            # ✅ BOLA BLANCA más suave
+            # ✅ BOLA BLANCA con potencia completa
             self.cue_ball_body.velocity = (
-                direction_x * power * velocity_scale * 0.85,  # 15% menos para blanca
-                direction_y * power * velocity_scale * 0.85
+                direction_x * power * velocity_scale,
+                direction_y * power * velocity_scale
             )
             self.cue_ball_body.angular_velocity = (power * velocity_scale * 0.6) / BALL_RADIUS
             
